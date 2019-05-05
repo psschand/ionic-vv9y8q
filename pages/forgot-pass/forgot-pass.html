@@ -1,0 +1,44 @@
+<ion-header>
+
+  <ion-navbar color="dark">
+    <ion-title>Forgot Password</ion-title>
+  </ion-navbar>
+
+</ion-header>
+
+
+<ion-content padding>
+
+  
+  <form [formGroup]="ForgotPasswordForm"  novalidate>
+    <!--divs-->
+    
+      <div class="row responsive-md">
+        <div class="col col-50 col-offset-25">
+            
+                   <!---->
+
+<ion-item>
+ <ion-label stacked>Email</ion-label>
+ <ion-input #email [(ngModel)]="email1" formControlName="email" type="email" placeholder="Your email address" 
+   [class.invalid]="!ForgotPasswordForm.controls.email.valid && ForgotPasswordForm.controls.email.dirty"></ion-input>
+</ion-item>
+<ion-item class="error-message" 
+ *ngIf="!ForgotPasswordForm.controls.email.valid  && ForgotPasswordForm.controls.email.dirty">
+ <p>Please enter a valid email.</p>
+</ion-item>
+
+<button ion-button block [disabled]="!ForgotPasswordForm.controls.email.valid" type="submit" (click)="recover()" >
+  Recover Password
+</button>
+
+  
+  </div>
+  </div>
+  
+  </form>
+
+
+
+
+</ion-content>

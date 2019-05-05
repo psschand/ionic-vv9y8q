@@ -1,0 +1,344 @@
+import {Injectable} from '@angular/core';
+import {AngularFireDatabase, FirebaseListObservable} from 'angularfire2/database';
+import 'rxjs/add/operator/first';
+import 'rxjs/add/operator/take';
+import { SharedService } from './shared.service';
+@Injectable()
+export class CartService {
+  items: any;
+  cartItems : FirebaseListObservable<any>;
+  orderItems: FirebaseListObservable<any>;
+
+  cartAmount : number  = 0;
+  constructor(public db: AngularFireDatabase,
+              private sharedService: SharedService
+  ) {}
+  
+  loadCartList(userid : string)  {
+     this.cartItems = this.db.list('cart/'+userid);
+
+     this.cartItems.subscribe(
+        (rows) => {
+          this.cartAmount  = 0;
+          rows.forEach(row => { 
+            this.cartAmount = this.cartAmount + (row.quantity*row.price);
+          });
+        },
+        (err) => {
+          console.log('not authenticated');
+        },
+        () => { 
+          console.log('done.');
+        }
+	  );
+
+  };
+
+  addCartItem(userid : string, product: any){
+   
+
+    this.loadCartList(userid);
+    
+    this.db.object(`cart/${userid}/${product.$key}`, {preserveSnapshot:true} ).first().subscribe(data => {
+      if(data.val() !== null) {
+        this.incrementCartItem(userid,product);
+      } else {
+        
+        this.db.object('products/'+product.$key, { preserveSnapshot: true }).first().subscribe(productData =>{
+        //%%%%%%%%%%%%%%%%
+
+          if( productData.val().stock!=0 && productData.val().available == true){ 
+       
+            var cartItem : any =  {   
+                image: product.image,
+                name:  product.name,
+                price: product.price,
+                quantity:1
+            }
+            this.cartItems.update(product.$key , cartItem);
+            this.sharedService.showToast("Item Added!");
+          }else{
+            this.sharedService.showToast("Item not Available");
+          }
+        //%%%%%%%%%%%%%%%%
+        });
+
+      }
+    });
+
+
+  };
+
+  removeCartItem(userid : string, productId : string){
+    this.loadCartList(userid);
+    this.cartItems.remove(productId).then(_ => this.sharedService.showToast("Item removed!") );
+  };
+
+  decrementCartItem(userid : string, product : any){
+    this.loadCartList(userid);
+    
+    this.db.object(`cart/${userid}/${product.$key}`, {preserveSnapshot:true} ).first().subscribe(data => {
+      if(data.val() !== null) {
+
+        if(data.val().quantity-1 > 0){
+            this.cartItems.update(product.$key , {quantity: data.val().quantity - 1 });
+        }else{
+            this.removeCartItem(userid,product.$key);
+        }
+
+      }else{
+          this.sharedService.showToast("No such element!");
+      } 
+    });
+  };
+
+  incrementCartItem(userid : string, product : any){
+    
+   
+
+    this.loadCartList(userid);
+    
+    this.db.object(`cart/${userid}/${product.$key}`, {preserveSnapshot:true} ).first().subscribe(cartItem => {
+      if(cartItem.val() !== null) {
+
+        this.db.object('products/'+product.$key, { preserveSnapshot: true }).first().subscribe(productData =>{
+        //%%%%%%%%%%%%%%%%
+
+          if(cartItem.val().quantity+1 <= productData.val().stock && productData.val().available == true){ // checking cart stock
+              console.log('Incremented Quantity Successfully');
+              this.cartItems.update(product.$key , {quantity: cartItem.val().quantity + 1 });
+          }else{
+              this.sharedService.showToast('Quality exceeds the Stock!');
+          }
+          
+        //%%%%%%%%%%%%%%%%
+        });
+
+      }else{
+        this.sharedService.showToast('No such element to increment quantity!');
+      } 
+    });
+
+  };
+  
+
+
+
+
+
+  // Order services
+  checkout(userid: string, deliveryDetails : string ){
+
+    // Loads the subscribed cart list
+    this.loadCartList(userid);
+
+    // loads the unsubscribed cart list
+    var cartItemUnsubscribed = this.db.list('cart/'+userid).take(1);
+
+    // Add items to orders
+    var orderItem : FirebaseListObservable<any> = this.db.list('orders/'+userid);
+
+    // Add items to orders
+    var om : FirebaseListObservable<any> = this.db.list('om/');
+    
+   // create a list of items in an order
+   this.items=[]
+
+    // Because subscribed cart list would prevent adding items to cart after an order is created.
+    cartItemUnsubscribed.forEach(rows => {
+      rows.forEach(cartItem => { 
+        console.log(cartItem)
+        cartItem.status = 1;
+        cartItem.delivery = deliveryDetails;
+        console.log(cartItem)
+        // check if product is available
+        this.db.object('products/'+cartItem.$key, { preserveSnapshot: true }).first().subscribe(productData =>{
+        //%%%%%%%%%%%%%%%%
+          if(cartItem.quantity <= productData.val().stock && productData.val().available== true){
+            
+            //get the push key value
+            // var key = om.push().getKey();
+
+            //then you can write in that node in this way
+           // mDatabase.child("posts").child(key).setValue(yourValue)
+            var insertData = om.push(cartItem).then(ca=>{      
+            var insertedKey = ca.getKey(); // last inserted key
+            console.log("inserted key",insertedKey);
+            cartItem.orderid=insertedKey;
+            orderItem.push(cartItem); // add the item to orders
+          }   );
+
+
+            this.cartItems.remove(cartItem.$key); // remove the item from the cart
+
+            // decrement the item qty
+            this.db.object('products/'+cartItem.$key+'/stock').set(productData.val().stock - cartItem.quantity);
+       
+
+          }
+          
+        //%%%%%%%%%%%%%%%%
+        });
+        
+      });
+    });
+
+
+  }
+
+  loadOrders(userid: string){
+    this.orderItems = this.db.list('orders/'+userid);
+  };
+
+  // Cancel services
+cancelorder(userid: string, product : any ){
+  this.db.object(`orders/${userid}/${product.$key}/status`).set('cancelled');
+  this.db.object(`om/${product.orderid}/status`).set('cancelled');
+  //var oid=  this.db.list(`orders/${userid}/${product.$key}/orderid`).take(1);
+  // //console.log("userid:",userid,"/product:",product.$key,"/oid:",oid,"oid.orderid",oid.orderid)
+  // this.db.object(`orders/${userid}/${product.$key}/status`).set('cancelled');
+  console.log("orderid from ui:",product.orderid,product);
+
+
+}
+
+}
+---------------------
+To set a custom id you could do something like this:
+
+FirebaseNodeName.child("user").child(customId).set(key, value);
+
+You can also try something like this:
+
+var empsRef = ref.child("employees");
+
+empsRef.child('11111').set({
+  lastname: "Lee",
+  firstname: "Kang"
+});
+
+empsRef.child('22222').set({
+  lastname: "Nut",
+  firstname: "Dough"
+});
+--------------------------
+
+
+Math.floor(new Date().valueOf() * Math.random())
+
+
+
+
+-----------------------------
+some_promise_call()
+.then(function success(res) { logger.log(res) },
+      function error(err) { logger.log(err) })
+      ----------------------------------------
+
+
+var onComplete = function(error) {
+    if (error) {
+        console.log('Operation failed');
+    } else {
+        console.log(' Operation completed');
+    }
+};
+---------------------------------------------------------------------------------
+
+this.generate = function() {
+			 var ts = this.timestamp.toString();
+			 var parts = ts.split( "" ).reverse();
+			 var id = "";
+			 var n =(Date.now().toString(36) + Math.random().toString(36).substr(2, 5)).toUpperCase()
+       
+       var t=Date.now().toString(36).toUpperCase()
+        var h = parseInt(t, 36)
+        var dt36 = new Date(h)
+        
+       var da=Date.now()
+       var das=da.toString()
+       ts = Number(das)
+       var dt = new Date(ts)
+			 
+       for( var i = 0; i < this.length; ++i ) {
+				var index = _getRandomInt( 0, parts.length - 1 );
+				id += parts[index];	 
+			 }
+			 
+			 return id + "----"+dt+"----"+das+"----"+dt36+"----"+t+"----"+dt;
+		 }
+
+     function rStr() { var s=Math.random().toString(36).slice(2); 
+  return s.length===10 ? s : rStr(); }
+
+   var functionHolder2= function rStr() { var s=Math.random().toString(36).slice(2); 
+   
+  return s.length===10 ? alert(s) : rStr(); }
+
+  function rStr() { var s=Math.random().toString(36).slice(9); 
+  return s.length===3 ? s : rStr(); }
+  -------------------------------------------
+  Ok! I got it to work. For future reference, this #211 (comment) is the essence of the solution:
+
+I'm using angular-cli. Add it to angular-cli-build.js, and src/system-config.js (I think thats part of the install anyway).
+Add typings to typings.json. I addded "firebase": "file:node_modules/firebase/firebase.d.ts" to my globalDependencies.
+Add TIMESTAMP support by adding the block in the comment above ti src/typings.d.ts
+Import firebase as import * as firebase from 'firebase'; where you want to use TIMESTAMP, and then refernce it as firebase.database.ServerValue.TIMESTAMP.
+Thanks so much for the help.
+------------------------------------
+next friday
+var day = new Date("2018/10/12");
+var d = new Date("2018/10/12");
+
+var days = 7 - day.getDay() + 5;;
+
+var nextDay = new Date(day.setDate(day.getDate() + days)); 
+
+
+console.log("current date",d.toString(),"next friday is on",nextDay.toString());
+-----------------------------------------------
+//takes dayIndex from sunday(0) to saturday(6)
+function nextDate(dayIndex) {
+    var today = new Date();
+    today.setDate(today.getDate() + (dayIndex - 1 - today.getDay() + 7) % 7 + 1);
+    return today;
+}
+document.write("Next Sunday is: "+nextDate(0).toLocaleString()+"<br/>");
+document.write("Next Thursday is: "+nextDate(4).toLocaleString()+"<br/>");
+document.write("Next Saturday is: "+nextDate(6).toLocaleString());
+------------------------------------------------------------------------------
+  var inputJSON = {
+        "created_date": "2017-04-13 10:12:12",
+        "current_time": "2017-04-13 11:10:46"
+    };
+
+    function getDataDiff(startDate, endDate) {
+        var diff = endDate.getTime() - startDate.getTime();
+        var days = Math.floor(diff / (60 * 60 * 24 * 1000));
+        var hours = Math.floor(diff / (60 * 60 * 1000)) - (days * 24);
+        var minutes = Math.floor(diff / (60 * 1000)) - ((days * 24 * 60) + (hours * 60));
+        var seconds = Math.floor(diff / 1000) - ((days * 24 * 60 * 60) + (hours * 60 * 60) + (minutes * 60));
+        return { day: days, hour: hours, minute: minutes, second: seconds };
+    }
+    var diff = getDataDiff(new Date(inputJSON.created_date), new Date(inputJSON.current_time));
+    console.log(diff);
+    ----------------------------------------------------------------------------------
+    
+let date1: string = params.data.incidentTime;
+let date2: string = params.data.creationTime;
+
+let diffInMs: number = Date.parse(date2) - Date.parse(date1);
+let diffInHours: number = diffInMs / 1000 / 60 / 60;
+
+console.log(diffInHours);
+---------------------------------------------
+let date1 = new Date(params.data.incidentTime).getTime();
+let date2 = new Date(params.data.creationTime).getTime();
+let time = date1 - date2;  //msec
+let hoursDiff = time / (3600 * 1000);
+---------------------------------------------
+let date1 = new Date(params.data.incidentTime).getTime();
+let date2 = new Date(params.data.creationTime).getTime();
+let time = date1 - date2;  //msec
+let hoursDiff = time / (3600 * 1000);
+
